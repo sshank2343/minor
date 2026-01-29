@@ -1,0 +1,23 @@
+{
+  "name": "scalesim-control-plane",
+  "version": "1.0.0",
+  "description": "Control Plane orchestrator for ScaleSim",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dockerode": "^3.3.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mongoose": "^8.5.0",
+    "redis": "^4.6.13",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}

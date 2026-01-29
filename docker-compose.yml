@@ -1,0 +1,59 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7
+    container_name: scalesim-redis
+    ports:
+      - "6379:6379"
+
+  control-plane:
+    build: ./control-plane
+    container_name: scalesim-control-plane
+    env_file:
+      - .env
+    ports:
+      - "5000:5000"
+    depends_on:
+      - redis
+    volumes:
+      - ./shared/logs:/shared/logs
+      - ./shared/results:/shared/results
+
+  target-server:
+    build: ./target-server
+    container_name: scalesim-target
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./shared/logs:/shared/logs
+
+  load-engine:
+    build: ./load-engine
+    container_name: scalesim-load-engine
+    env_file:
+      - .env
+    depends_on:
+      - target-server
+      - redis
+
+  analyst-agent:
+    build: ./analyst-agent
+    container_name: scalesim-analyst
+    env_file:
+      - .env
+    volumes:
+      - ./shared/logs:/shared/logs
+      - ./shared/results:/shared/results
+    depends_on:
+      - redis
+
+  frontend:
+    build: ./frontend
+    container_name: scalesim-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - control-plane

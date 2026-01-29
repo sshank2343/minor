@@ -1,0 +1,25 @@
+# ===== Node =====
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ===== Python =====
+.venv/
+__pycache__/
+*.pyc
+
+# ===== Env =====
+.env
+
+# ===== Logs & Results =====
+*.log
+shared/logs/*
+shared/results/*
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== Docker =====
+*.pid
