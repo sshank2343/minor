@@ -9,13 +9,19 @@ function SystemHealth() {
   useEffect(() => {
     if (!socket) return;
 
-    socket.on("telemetry", () => {
-      setStatus("HEALTHY");
-      setLastSeen(new Date().toLocaleTimeString());
-    });
+    const handleTelemetry = () => {
+      try {
+        setStatus("HEALTHY");
+        setLastSeen(new Date().toLocaleTimeString());
+      } catch (error) {
+        console.error("Error handling telemetry in SystemHealth:", error);
+      }
+    };
+
+    socket.on("telemetry", handleTelemetry);
 
     return () => {
-      socket.off("telemetry");
+      socket.off("telemetry", handleTelemetry);
     };
   }, [socket]);
 
