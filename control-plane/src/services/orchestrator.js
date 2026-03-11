@@ -6,39 +6,33 @@ const LOAD_ENGINE_IMAGE = "scalesim-load-engine";
 export const startLoadTest = async (testRunId, params) => {
   try {
     const envVars = [
-      `TARGET_URL=${params.targetUrl}`,
-      `USERS=${params.users}`,
-      `SPAWN_RATE=${params.spawnRate}`,
-      `DURATION=${params.duration}`,
+      `TARGET_BASE_URL=${params.baseUrl}`,
+      `ENDPOINT_PATH=${params.endpointPath}`,
+      `METHOD=${params.method}`,
       `REDIS_URL=${process.env.REDIS_URL}`,
+      `TEST_RUN_ID=${testRunId}`,
     ];
     
-    // Add progressive testing parameters
-    if (params.progressiveMode) {
-      envVars.push(`PROGRESSIVE_MODE=true`);
-      envVars.push(`MAX_ERROR_RATE=${params.maxErrorRate || 0.1}`);
-      envVars.push(`MAX_LATENCY_MS=${params.maxLatencyMs || 5000}`);
-      envVars.push(`FAILURE_WINDOW=${params.failureWindow || 30}`);
+    // Add ramp configuration for breaking point finder
+    envVars.push(`AUTO_DISCOVERY_MODE=${params.autoDiscoveryMode || false}`);
+    envVars.push(`START_USERS=${params.ramp.startUsers}`);
+    envVars.push(`STEP_USERS=${params.ramp.stepUsers || 20}`);
+    envVars.push(`STEP_DURATION=${params.ramp.stepDurationSec}`);
+    envVars.push(`MAX_USERS=${params.ramp.maxUsers}`);
+    
+    // Add stop conditions
+    envVars.push(`MAX_ERROR_RATE=${params.stopConditions.maxErrorRate}`);
+    envVars.push(`MAX_P95_LATENCY_MS=${params.stopConditions.maxP95LatencyMs}`);
+    envVars.push(`MAX_TIMEOUT_RATE=${params.stopConditions.maxTimeoutRate}`);
+    
+    // Add headers as JSON string if provided
+    if (params.headers && Object.keys(params.headers).length > 0) {
+      envVars.push(`HEADERS=${JSON.stringify(params.headers)}`);
     }
     
-    // Add auto-ramp mode parameters
-    if (params.autoRampMode) {
-      envVars.push(`AUTO_RAMP_MODE=true`);
-      envVars.push(`INITIAL_USERS=${params.initialUsers || 1}`);
-      envVars.push(`USER_INCREMENT=${params.userIncrement || 5}`);
-      envVars.push(`STEP_DURATION=${params.stepDuration || 30}`);
-      envVars.push(`MAX_USERS=${params.users}`);
-      envVars.push(`MAX_ERROR_RATE=${params.maxErrorRate || 0.1}`);
-      envVars.push(`MAX_LATENCY_MS=${params.maxLatencyMs || 5000}`);
-      envVars.push(`FAILURE_WINDOW=${params.failureWindow || 30}`);
-    }
-    
-    // Add optional authentication
-    if (params.apiKey) {
-      envVars.push(`API_KEY=${params.apiKey}`);
-    }
-    if (params.bearerToken) {
-      envVars.push(`BEARER_TOKEN=${params.bearerToken}`);
+    // Add body as JSON string if provided (for POST/PUT/PATCH)
+    if (params.body) {
+      envVars.push(`BODY=${JSON.stringify(params.body)}`);
     }
     
     const container = await docker.createContainer({
@@ -46,8 +40,8 @@ export const startLoadTest = async (testRunId, params) => {
       name: `load-engine-${testRunId}`,
       Env: envVars,
       HostConfig: {
-        AutoRemove: true,
-        NetworkMode: "scalesim_default", // 🔥 THIS IS THE FIX
+        AutoRemove: false,
+        NetworkMode: "scalesim_default",
       },
     });
 
@@ -56,9 +50,11 @@ export const startLoadTest = async (testRunId, params) => {
     await TestRun.findByIdAndUpdate(testRunId, {
       status: "RUNNING",
       startedAt: new Date(),
+      currentUsers: params.ramp.startUsers,
+      currentStage: 0,
     });
 
-    console.log(`Load test started for ${testRunId}`);
+    console.log(`Breaking point test started for ${testRunId}: ${params.method} ${params.endpointPath}`);
   } catch (error) {
     console.error("Failed to start load test:", error);
 

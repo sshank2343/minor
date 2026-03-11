@@ -1,33 +1,26 @@
 #!/bin/sh
 
-echo "Starting Locust Load Engine..."
+echo "🔍 Starting Breaking Point Finder Load Engine..."
 
-: "${TARGET_URL:?TARGET_URL not set}"
-: "${USERS:?USERS not set}"
-: "${SPAWN_RATE:?SPAWN_RATE not set}"
-: "${DURATION:?DURATION not set}"
+# Validate required environment variables
+: "${TARGET_BASE_URL:?TARGET_BASE_URL not set}"
+: "${ENDPOINT_PATH:?ENDPOINT_PATH not set}"
+: "${METHOD:?METHOD not set}"
+: "${START_USERS:?START_USERS not set}"
+: "${STEP_USERS:?STEP_USERS not set}"
+: "${STEP_DURATION:?STEP_DURATION not set}"
+: "${MAX_USERS:?MAX_USERS not set}"
+: "${REDIS_URL:?REDIS_URL not set}"
 
-# Check if auto-ramp mode is enabled
-if [ "$AUTO_RAMP_MODE" = "true" ]; then
-  echo "🤖 Auto-Ramp Mode: Starting capacity discovery..."
-  echo "   Initial Users: ${INITIAL_USERS:-1}"
-  echo "   User Increment: ${USER_INCREMENT:-5}"
-  echo "   Step Duration: ${STEP_DURATION:-30}s"
-  echo "   Max Users (Safety): ${MAX_USERS:-1000}"
-  
-  # Use custom load shape for auto-ramping
-  locust \
-    -f scripts/locustfile.py \
-    --headless \
-    --host="$TARGET_URL" \
-    --autostart
-else
-  # Standard or progressive mode
-  locust \
-    -f scripts/locustfile.py \
-    --headless \
-    -u "$USERS" \
-    -r "$SPAWN_RATE" \
-    -t "${DURATION}s" \
-    --host="$TARGET_URL"
-fi
+echo "📊 Test Configuration:"
+echo "   Endpoint: ${METHOD} ${TARGET_BASE_URL}${ENDPOINT_PATH}"
+echo "   Ramp: ${START_USERS} users → ${MAX_USERS} users (step: ${STEP_USERS} every ${STEP_DURATION}s)"
+echo "   Stop Conditions: Error ${MAX_ERROR_RATE}%, P95 ${MAX_P95_LATENCY_MS}ms, Timeout ${MAX_TIMEOUT_RATE}%"
+echo ""
+
+# Start Locust with custom LoadTestShape
+locust \
+  -f scripts/locustfile.py \
+  --headless \
+  --host="$TARGET_BASE_URL" \
+  --autostart

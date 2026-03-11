@@ -7,75 +7,100 @@ const TestRunSchema = new mongoose.Schema(
       enum: ["CREATED", "RUNNING", "STOPPED", "FAILED", "COMPLETED", "BREAKING_POINT"],
       default: "CREATED",
     },
-    targetUrl: {
+    // Single Endpoint Configuration
+    baseUrl: {
       type: String,
       required: true,
     },
-    users: {
-      type: Number,
+    endpointPath: {
+      type: String,
       required: true,
     },
-    spawnRate: {
-      type: Number,
-      required: true,
+    method: {
+      type: String,
+      enum: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+      default: "GET",
     },
-    duration: {
-      type: Number, // seconds
-      required: true,
+    headers: {
+      type: Map,
+      of: String,
+      default: {},
     },
-    // Progressive test configuration
-    progressiveMode: {
-      type: Boolean,
-      default: false,
+    body: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
     },
-    autoRampMode: {
-      type: Boolean,
-      default: false,
+    // Ramp Configuration
+    ramp: {
+      startUsers: {
+        type: Number,
+        required: true,
+        default: 20,
+      },
+      stepUsers: {
+        type: Number,
+        required: true,
+        default: 20,
+      },
+      stepDurationSec: {
+        type: Number,
+        required: true,
+        default: 15,
+      },
+      maxUsers: {
+        type: Number,
+        required: true,
+        default: 1000,
+      },
     },
-    initialUsers: {
-      type: Number,
-      default: 1,
+    // Stop Conditions
+    stopConditions: {
+      maxErrorRate: {
+        type: Number,
+        default: 0.05, // 5%
+      },
+      maxP95LatencyMs: {
+        type: Number,
+        default: 2000, // 2 seconds
+      },
+      maxTimeoutRate: {
+        type: Number,
+        default: 0.03, // 3%
+      },
     },
-    userIncrement: {
-      type: Number,
-      default: 5,
-    },
-    stepDuration: {
-      type: Number,
-      default: 30,
-    },
-    maxErrorRate: {
-      type: Number,
-      default: 0.1, // 10%
-    },
-    maxLatencyMs: {
-      type: Number,
-      default: 5000, // 5 seconds
-    },
-    failureWindow: {
-      type: Number,
-      default: 30, // seconds
-    },
-    // Results with RPS data
+    // Test Execution Results
     startedAt: {
       type: Date,
     },
     finishedAt: {
       type: Date,
     },
+    currentUsers: {
+      type: Number,
+      default: 0,
+    },
+    currentStage: {
+      type: Number,
+      default: 0,
+    },
+    // Breaking Point Data
     breakingPoint: {
       reason: String,
       totalRequests: Number,
       failedRequests: Number,
       errorRate: Number,
+      timeoutRate: Number,
       timestamp: Date,
       usersAtFailure: Number,
       currentRps: Number,
       peakRps: Number,
       avgRps: Number,
       elapsedTime: Number,
+      p50Latency: Number,
+      p95Latency: Number,
+      p99Latency: Number,
     },
-    maxStableUsers: {
+    stableUsers: {
       type: Number,
     },
     peakRps: {
@@ -94,6 +119,22 @@ const TestRunSchema = new mongoose.Schema(
     },
     error: {
       type: String,
+    },
+    // AI Analysis
+    aiAnalysis: {
+      endpoint: String,
+      breakingPointUsers: Number,
+      stableUsers: Number,
+      failureType: String,
+      rootCause: String,
+      evidence: {
+        p95LatencyMs: Number,
+        errorRate: Number,
+        timeoutRate: Number,
+        dominantStatusCode: Number,
+      },
+      recommendations: [String],
+      generatedAt: Date,
     },
   },
   { timestamps: true }

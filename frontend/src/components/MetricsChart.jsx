@@ -7,7 +7,6 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  ReferenceLine,
   Legend,
 } from "recharts";
 import useSocket from "../hooks/useSocket";
@@ -15,177 +14,222 @@ import useSocket from "../hooks/useSocket";
 function MetricsChart() {
   const [data, setData] = useState([]);
   const [breakingPoint, setBreakingPoint] = useState(null);
-  const [currentRps, setCurrentRps] = useState(0);
-  const [peakRps, setPeakRps] = useState(0);
-  const [chartError, setChartError] = useState(false);
+  const [currentMetrics, setCurrentMetrics] = useState({
+    users: 0,
+    rampStage: 0,
+    rps: 0,
+    avgLatency: 0,
+    p95Latency: 0,
+    p99Latency: 0,
+    errorRate: 0,
+    timeoutRate: 0,
+  });
   const socket = useSocket();
 
   useEffect(() => {
     if (!socket) return;
 
+    const handleBreakingPoint = (data) => {
+      try {
+        if (data && data.breakingPoint) {
+          setBreakingPoint(data.breakingPoint);
+        }
+      } catch (error) {
+        console.error("Error handling breaking point:", error);
+      }
+    };
+
     const handleTelemetry = (metric) => {
       try {
-        if (!metric) return;
+        if (!metric || !metric.timestamp) return;
 
-        // Handle breaking point
-        if (metric.type === "BREAKING_POINT") {
-          setBreakingPoint(metric.breaking_point);
-          return;
-        }
+        console.log("📊 Received telemetry:", {
+          users: metric.users,
+          rps: metric.rps,
+          p95_latency: metric.p95_latency,
+          p95Latency: metric.p95Latency,
+          error_rate: metric.error_rate,
+          errorRate: metric.errorRate,
+        });
 
-        // Update RPS tracking
-        if (metric.current_rps !== undefined) {
-          setCurrentRps(metric.current_rps);
-        }
-        if (metric.peak_rps !== undefined) {
-          setPeakRps(metric.peak_rps);
-        }
+        // Support both snake_case and camelCase
+        const users = metric.users || 0;
+        const rps = metric.rps || 0;
+        const avgLatency = metric.avg_latency || metric.avgLatency || 0;
+        const p95Latency = metric.p95_latency || metric.p95Latency || metric.p95 || 0;
+        const p99Latency = metric.p99_latency || metric.p99Latency || metric.p99 || 0;
+        const errorRate = metric.error_rate !== undefined ? metric.error_rate : (metric.errorRate || 0);
+        const timeoutRate = metric.timeout_rate !== undefined ? metric.timeout_rate : (metric.timeoutRate || 0);
+        const rampStage = metric.ramp_stage || metric.rampStage || 0;
 
-        // Only add valid data points
-        if (metric.timestamp) {
-          setData((prev) => {
-            const next = [
-              ...prev,
-              {
-                time: new Date(metric.timestamp * 1000).toLocaleTimeString(),
-                latency: metric.latency_ms > 0 ? metric.latency_ms : null,
-                errorRate: metric.error_rate ? metric.error_rate * 100 : 0,
-                rps: metric.current_rps || 0,
-                users: metric.current_users || 0,
-                timestamp: metric.timestamp,
-              },
-            ];
+        // Update current metrics display
+        setCurrentMetrics({
+          users,
+          rampStage,
+          rps,
+          avgLatency,
+          p95Latency,
+          p99Latency,
+          errorRate,
+          timeoutRate,
+        });
 
-            // Keep last 50 points
-            return next.slice(-50);
-          });
-        }
+        // Add data point to chart
+        setData((prev) => {
+          const next = [
+            ...prev,
+            {
+              time: new Date(metric.timestamp * 1000).toLocaleTimeString(),
+              users,
+              rps,
+              avgLatency,
+              p95Latency,
+              p99Latency,
+              errorRate: errorRate * 100,
+              timeoutRate: timeoutRate * 100,
+              timestamp: metric.timestamp,
+            },
+          ];
+
+          // Keep last 100 points
+          return next.slice(-100);
+        });
       } catch (error) {
         console.error("Error handling telemetry:", error);
       }
     };
 
+    socket.on("breaking-point", handleBreakingPoint);
     socket.on("telemetry", handleTelemetry);
 
     return () => {
+      socket.off("breaking-point", handleBreakingPoint);
       socket.off("telemetry", handleTelemetry);
     };
   }, [socket]);
 
   return (
-    <div className="bg-gray-800 p-4 rounded-lg shadow">
-      <div className="flex justify-between items-center mb-2">
-        <h2 className="text-xl font-semibold">Performance Metrics</h2>
-        <div className="flex gap-3">
-          {currentRps > 0 && (
-            <div className="bg-blue-600 px-3 py-1 rounded text-sm font-semibold">
-              📊 {currentRps} RPS
-            </div>
-          )}
-          {peakRps > 0 && (
-            <div className="bg-purple-600 px-3 py-1 rounded text-sm font-semibold">
-              🔥 Peak: {peakRps} RPS
-            </div>
-          )}
-          {breakingPoint && (
-            <div className="bg-red-600 px-3 py-1 rounded text-sm font-semibold">
-              🚨 BREAKING POINT
-            </div>
-          )}
+    <div className="bg-gray-800 p-3 md:p-4 rounded-lg shadow">
+      <div className="flex justify-between items-center mb-3">
+        <h2 className="text-lg md:text-xl font-semibold">📊 Live Performance Metrics</h2>
+        {breakingPoint && (
+          <div className="bg-red-600 px-2 md:px-3 py-1 rounded text-xs md:text-sm font-semibold animate-pulse">
+            🚨 BREAKING POINT REACHED
+          </div>
+        )}
+      </div>
+
+      {/* Current Metrics Dashboard */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+        <div className="bg-gray-700 p-3 rounded">
+          <div className="text-xs text-gray-400">Concurrent Users</div>
+          <div className="text-2xl font-bold text-blue-400">{currentMetrics.users}</div>
+          <div className="text-xs text-gray-500">Stage {currentMetrics.rampStage}</div>
+        </div>
+
+        <div className="bg-gray-700 p-3 rounded">
+          <div className="text-xs text-gray-400">Requests/sec</div>
+          <div className="text-2xl font-bold text-green-400">{currentMetrics.rps}</div>
+          <div className="text-xs text-gray-500">RPS</div>
+        </div>
+
+        <div className="bg-gray-700 p-3 rounded">
+          <div className="text-xs text-gray-400">P95 Latency</div>
+          <div className="text-2xl font-bold text-yellow-400">{currentMetrics.p95Latency}ms</div>
+          <div className="text-xs text-gray-500">95th percentile</div>
+        </div>
+
+        <div className="bg-gray-700 p-3 rounded">
+          <div className="text-xs text-gray-400">Error Rate</div>
+          <div className="text-2xl font-bold text-red-400">{(currentMetrics.errorRate * 100).toFixed(1)}%</div>
+          <div className="text-xs text-gray-500">Failures</div>
         </div>
       </div>
 
       {breakingPoint && (
-        <div className="mb-3 p-3 bg-red-900/30 border border-red-600 rounded text-sm">
-          <div className="font-semibold text-red-400 mb-2">🚨 API Capacity Discovered</div>
+        <div className="mb-4 p-3 bg-red-900/30 border border-red-600 rounded text-sm">
+          <div className="font-semibold text-red-400 mb-2">🚨 Breaking Point Detected</div>
           <div className="grid grid-cols-2 gap-2 text-gray-300">
             <div><strong>Reason:</strong> {breakingPoint.reason}</div>
-            <div><strong>Max Users:</strong> {breakingPoint.users_at_failure || "N/A"}</div>
-            <div><strong>Peak RPS:</strong> {breakingPoint.peak_rps || "N/A"} req/s</div>
-            <div><strong>Avg RPS:</strong> {breakingPoint.avg_rps ? breakingPoint.avg_rps.toFixed(2) : "N/A"} req/s</div>
-            <div><strong>Total Requests:</strong> {breakingPoint.total_requests}</div>
-            <div><strong>Failed:</strong> {breakingPoint.failed_requests}</div>
-            <div><strong>Error Rate:</strong> {(breakingPoint.error_rate * 100).toFixed(2)}%</div>
-            <div><strong>Duration:</strong> {breakingPoint.elapsed_time ? breakingPoint.elapsed_time.toFixed(1) : "N/A"}s</div>
+            <div><strong>Users at Failure:</strong> {breakingPoint.usersAtFailure || breakingPoint.users_at_failure || "N/A"}</div>
+            <div><strong>Peak RPS:</strong> {breakingPoint.peakRps || breakingPoint.peak_rps || "N/A"} req/s</div>
+            <div><strong>P95 Latency:</strong> {breakingPoint.p95Latency || breakingPoint.p95_latency || "N/A"}ms</div>
+            <div><strong>Error Rate:</strong> {((breakingPoint.errorRate || breakingPoint.error_rate || 0) * 100).toFixed(2)}%</div>
+            <div><strong>Timeout Rate:</strong> {((breakingPoint.timeoutRate || breakingPoint.timeout_rate || 0) * 100).toFixed(2)}%</div>
           </div>
         </div>
       )}
 
-      {data.length === 0 ? (
-        <div className="flex items-center justify-center h-[300px] text-gray-400">
-          <div className="text-center">
-            <div className="text-4xl mb-2">📊</div>
-            <div>Waiting for test data...</div>
-            <div className="text-xs mt-1">Start a test to see metrics</div>
-          </div>
-        </div>
-      ) : chartError ? (
-        <div className="flex items-center justify-center h-[300px] text-gray-400">
-          <div className="text-center">
-            <div className="text-4xl mb-2">⚠️</div>
-            <div>Chart rendering error</div>
-            <div className="text-xs mt-1">Data is being collected but cannot be displayed</div>
-          </div>
-        </div>
-      ) : (
-        <div style={{ width: '100%', height: 300 }}>
-          <ResponsiveContainer>
-            <LineChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+      {/* Charts */}
+      <div className="space-y-3">
+        {/* Users and RPS Chart */}
+        <div>
+          <h3 className="text-sm font-semibold mb-2 text-gray-300">Users & RPS Over Time</h3>
+          <ResponsiveContainer width="100%" height={160}>
+            <LineChart data={data}>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis 
-                dataKey="time" 
-                stroke="#9CA3AF"
-                tick={{ fontSize: 12 }}
-                allowDataOverflow={false}
-              />
-              <YAxis 
-                yAxisId="left"
-                stroke="#9CA3AF"
-                label={{ value: 'Latency (ms)', angle: -90, position: 'insideLeft', fill: '#9CA3AF' }}
-                allowDataOverflow={false}
-              />
-              <YAxis 
-                yAxisId="right"
-                orientation="right"
-                stroke="#EF4444"
-                label={{ value: 'Error Rate (%)', angle: 90, position: 'insideRight', fill: '#EF4444' }}
-                allowDataOverflow={false}
-              />
+              <XAxis dataKey="time" stroke="#9CA3AF" style={{ fontSize: 10 }} />
+              <YAxis stroke="#9CA3AF" style={{ fontSize: 10 }} />
               <Tooltip 
                 contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                labelStyle={{ color: '#F3F4F6' }}
               />
               <Legend />
-              
-              <Line
-                yAxisId="left"
-                type="monotone"
-                dataKey="latency"
-                stroke="#3B82F6"
-                name="Latency (ms)"
-                dot={false}
-                strokeWidth={2}
-                connectNulls
-                isAnimationActive={false}
-              />
-              <Line
-                yAxisId="right"
-                type="monotone"
-                dataKey="errorRate"
-                stroke="#EF4444"
-                name="Error Rate (%)"
-                dot={false}
-                strokeWidth={2}
-                connectNulls
-                isAnimationActive={false}
-              />
+              <Line type="monotone" dataKey="users" stroke="#3B82F6" name="Users" dot={false} />
+              <Line type="monotone" dataKey="rps" stroke="#10B981" name="RPS" dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
-      )}
 
-      <div className="mt-2 text-xs text-gray-400 text-center">
-        {data.length > 0 ? `Showing last ${data.length} data points` : "Waiting for metrics..."}
+        {/* Latency Chart (P95, P99) */}
+        <div>
+          <h3 className="text-sm font-semibold mb-2 text-gray-300">Latency Percentiles (ms)</h3>
+          <ResponsiveContainer width="100%" height={160}>
+            <LineChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+              <XAxis dataKey="time" stroke="#9CA3AF" style={{ fontSize: 10 }} />
+              <YAxis stroke="#9CA3AF" style={{ fontSize: 10 }} />
+              <Tooltip 
+                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                labelStyle={{ color: '#F3F4F6' }}
+              />
+              <Legend />
+              <Line type="monotone" dataKey="avgLatency" stroke="#6366F1" name="Avg" dot={false} />
+              <Line type="monotone" dataKey="p95Latency" stroke="#F59E0B" name="P95" dot={false} />
+              <Line type="monotone" dataKey="p99Latency" stroke="#EF4444" name="P99" dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Error and Timeout Rate Chart */}
+        <div>
+          <h3 className="text-sm font-semibold mb-2 text-gray-300">Error & Timeout Rates (%)</h3>
+          <ResponsiveContainer width="100%" height={160}>
+            <LineChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+              <XAxis dataKey="time" stroke="#9CA3AF" style={{ fontSize: 10 }} />
+              <YAxis stroke="#9CA3AF" style={{ fontSize: 10 }} />
+              <Tooltip 
+                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                labelStyle={{ color: '#F3F4F6' }}
+              />
+              <Legend />
+              <Line type="monotone" dataKey="errorRate" stroke="#DC2626" name="Error Rate" dot={false} />
+              <Line type="monotone" dataKey="timeoutRate" stroke="#F97316" name="Timeout Rate" dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       </div>
+
+      {data.length === 0 && (
+        <div className="flex items-center justify-center h-[150px] text-gray-400">
+          <div className="text-center">
+            <div className="text-4xl mb-2">📊</div>
+            <div>Waiting for test data...</div>
+            <div className="text-xs mt-1">Start a test to see live metrics</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

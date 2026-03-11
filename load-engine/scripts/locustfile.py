@@ -4,48 +4,152 @@ import time
 import json
 import sys
 from lib.redis_client import publish_metric
+from collections import defaultdict
 
-# Progressive load testing configuration
-PROGRESSIVE_MODE = os.getenv("PROGRESSIVE_MODE", "false").lower() == "true"
-AUTO_RAMP_MODE = os.getenv("AUTO_RAMP_MODE", "false").lower() == "true"
-MAX_ERROR_RATE = float(os.getenv("MAX_ERROR_RATE", "0.1"))  # 10% default
-MAX_LATENCY_MS = int(os.getenv("MAX_LATENCY_MS", "5000"))  # 5 seconds default
-FAILURE_WINDOW = int(os.getenv("FAILURE_WINDOW", "30"))  # 30 seconds window
+# Dynamic endpoint configuration
+TARGET_BASE_URL = os.getenv("TARGET_BASE_URL", "http://target-server:5000")
+ENDPOINT_PATH = os.getenv("ENDPOINT_PATH", "/")
+METHOD = os.getenv("METHOD", "GET").upper()
+HEADERS_JSON = os.getenv("HEADERS", "{}")
+BODY_JSON = os.getenv("BODY", None)
 
-# Auto-ramp configuration - Custom ramping sequence
-STEP_DURATION = int(os.getenv("STEP_DURATION", "15"))  # 15 seconds per step (faster)
-MAX_USERS = int(os.getenv("MAX_USERS", "1000"))  # Safety limit
+# Parse headers and body
+try:
+    CUSTOM_HEADERS = json.loads(HEADERS_JSON)
+except:
+    CUSTOM_HEADERS = {}
 
-# Custom ramping sequence: 1→2→3→4→5→10→25→50→100→200→300→400→500→1000→2000→3000→4000→5000...
-RAMPING_SEQUENCE = [1, 2, 3, 4, 5, 10, 25, 50, 100, 200, 300, 400, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]
+REQUEST_BODY = None
+if BODY_JSON:
+    try:
+        REQUEST_BODY = json.loads(BODY_JSON)
+    except:
+        REQUEST_BODY = None
 
-# Failure tracking with RPS
-failure_tracker = {
+# Breaking point ramp configuration
+AUTO_DISCOVERY_MODE = os.getenv("AUTO_DISCOVERY_MODE", "false").lower() == "true"
+START_USERS = int(os.getenv("START_USERS", "20"))
+STEP_USERS = int(os.getenv("STEP_USERS", "20"))
+STEP_DURATION = int(os.getenv("STEP_DURATION", "15"))  # seconds per step
+MAX_USERS = int(os.getenv("MAX_USERS", "1000"))
+
+# Stop conditions
+MAX_ERROR_RATE = float(os.getenv("MAX_ERROR_RATE", "0.05"))  # 5%
+MAX_P95_LATENCY_MS = int(os.getenv("MAX_P95_LATENCY_MS", "2000"))  # 2 seconds
+MAX_TIMEOUT_RATE = float(os.getenv("MAX_TIMEOUT_RATE", "0.03"))  # 3%
+
+
+# Generate intelligent ramping sequence for auto-discovery
+def generate_intelligent_ramping_sequence(max_users):
+    """
+    Generate intelligent ramping sequence: 1 → 2 → 3 → 4 → 5 → 10 → 20 → 30 → 40 → 50 → 100 → 200 → ...
+    This allows quick discovery of breaking points while maintaining precision at lower levels.
+    """
+    sequence = []
+    
+    # Phase 1: Linear 1-5 (quick initial test)
+    sequence.extend([1, 2, 3, 4, 5])
+    
+    # Phase 2: Increments of 10 from 10-50
+    for i in range(10, 60, 10):
+        sequence.append(i)
+    
+    # Phase 3: Increments of 50 from 100-500
+    for i in range(100, 550, 50):
+        sequence.append(i)
+    
+    # Phase 4: Increments of 100 from 600-1000
+    for i in range(600, 1100, 100):
+        sequence.append(i)
+    
+    # Phase 5: Increments of 250 from 1250-2500
+    for i in range(1250, 2750, 250):
+        sequence.append(i)
+    
+    # Phase 6: Increments of 500 from 3000-5000
+    for i in range(3000, 5500, 500):
+        sequence.append(i)
+    
+    # Phase 7: Increments of 1000 from 6000 onwards
+    current = 6000
+    while current <= max_users:
+        sequence.append(current)
+        current += 1000
+    
+    # Filter to only include values up to max_users
+    return [u for u in sequence if u <= max_users]
+
+
+# Generate ramping sequence
+def generate_ramping_sequence(start, step, max_users):
+    """Generate ramping sequence from start by step increments up to max_users"""
+    sequence = []
+    current = start
+    while current <= max_users:
+        sequence.append(current)
+        current += step
+    return sequence
+
+if AUTO_DISCOVERY_MODE:
+    RAMPING_SEQUENCE = generate_intelligent_ramping_sequence(MAX_USERS)
+    print(f"\n{'='*70}")
+    print(f"🤖 AUTO DISCOVERY MODE - Intelligent Ramping")
+    print(f"{'='*70}")
+    print(f"Target: {TARGET_BASE_URL}{ENDPOINT_PATH}")
+    print(f"Method: {METHOD}")
+    print(f"Ramping Sequence: {' → '.join(map(str, RAMPING_SEQUENCE[:15]))}{'...' if len(RAMPING_SEQUENCE) > 15 else ''}")
+    print(f"Max Users: {MAX_USERS} (safety limit)")
+    print(f"Step Duration: {STEP_DURATION}s per step")
+    print(f"Stop Conditions:")
+    print(f"  - Error Rate: {MAX_ERROR_RATE:.1%}")
+    print(f"  - P95 Latency: {MAX_P95_LATENCY_MS}ms")
+    print(f"  - Timeout Rate: {MAX_TIMEOUT_RATE:.1%}")
+    print(f"{'='*70}\n")
+else:
+    RAMPING_SEQUENCE = generate_ramping_sequence(START_USERS, STEP_USERS, MAX_USERS)
+
+print(f"\n{'='*70}")
+print(f"🎯 BREAKING POINT FINDER - Single Endpoint Mode")
+print(f"{'='*70}")
+print(f"Target: {TARGET_BASE_URL}{ENDPOINT_PATH}")
+print(f"Method: {METHOD}")
+print(f"Ramping: {START_USERS} → {MAX_USERS} users (step: {STEP_USERS}, duration: {STEP_DURATION}s)")
+print(f"Stop Conditions:")
+print(f"  - Error Rate: {MAX_ERROR_RATE:.1%}")
+print(f"  - P95 Latency: {MAX_P95_LATENCY_MS}ms")
+print(f"  - Timeout Rate: {MAX_TIMEOUT_RATE:.1%}")
+print(f"{'='*70}\n")
+
+# Metrics tracking
+metrics_tracker = {
     "total_requests": 0,
     "failed_requests": 0,
-    "slow_requests": 0,
-    "recent_errors": [],
+    "timeout_requests": 0,
     "test_stopped": False,
     "breaking_point": None,
     "start_time": time.time(),
     "current_users": 0,
-    "last_rps_check": time.time(),
+    "current_stage": 0,
+    "last_metrics_publish": time.time(),
     "requests_last_second": 0,
     "current_rps": 0,
-    "peak_rps": 0
+    "peak_rps": 0,
+    "latencies": [],
+    "status_codes": defaultdict(int),
 }
 
-class AutoRampLoadShape(LoadTestShape):
+
+class BreakingPointRampShape(LoadTestShape):
     """
-    Automatically ramp up users using custom sequence: 1→5→10→25→50→100→200→300→400→500→1000→2000
-    Increases users gradually in aggressive steps for faster capacity discovery.
+    Ramp up users from START_USERS by STEP_USERS every STEP_DURATION seconds.
+    Stops when breaking point is detected or MAX_USERS reached.
     """
     
     def tick(self):
         run_time = self.get_run_time()
         
         # Stop if breaking point reached
-        if failure_tracker["test_stopped"]:
+        if metrics_tracker["test_stopped"]:
             return None
         
         # Calculate which step we're on
@@ -53,214 +157,257 @@ class AutoRampLoadShape(LoadTestShape):
         
         # Get current users from sequence
         if step_number >= len(RAMPING_SEQUENCE):
-            # Reached end of sequence
+            # Reached end of sequence (MAX_USERS reached)
             current_users = RAMPING_SEQUENCE[-1]
-            print(f"\nReached maximum ramping sequence: {current_users} users")
-            stop_test(f"Reached end of ramping sequence at {current_users} users")
+            print(f"\n✅ Reached maximum user limit: {current_users} users (no breaking point detected)")
+            stop_test(f"Reached maximum users ({current_users}) without breaking point")
             return None
         
         current_users = RAMPING_SEQUENCE[step_number]
         
-        # Safety limit check
-        if current_users > MAX_USERS:
-            print(f"\nReached maximum user limit: {MAX_USERS}")
-            stop_test(f"Reached safety limit of {MAX_USERS} users")
-            return None
-        
         # Update current user count for tracking
-        failure_tracker["current_users"] = current_users
+        metrics_tracker["current_users"] = current_users
+        metrics_tracker["current_stage"] = step_number
         
-        # Calculate spawn rate based on jump size
-        if step_number > 0:
-            previous_users = RAMPING_SEQUENCE[step_number - 1]
-            spawn_rate = max(current_users - previous_users, 1)
-        else:
-            spawn_rate = current_users
+        # Spawn rate = step size
+        spawn_rate = STEP_USERS
         
         return (current_users, spawn_rate)
 
 class ScaleSimUser(HttpUser):
-    wait_time = between(0.1, 0.5)  # Faster for higher RPS
+    wait_time = between(0.1, 0.5)
     
-    host = os.getenv("TARGET_URL", "http://target-server:3000")
+    host = TARGET_BASE_URL
 
     def on_start(self):
         self.start_time = time.time()
 
     @task
-    def hit_target(self):
+    def hit_target_endpoint(self):
         # Stop if breaking point reached
-        if failure_tracker["test_stopped"]:
+        if metrics_tracker["test_stopped"]:
+            self.environment.runner.quit()
             return
             
         start = time.time()
         
-        # Optional authentication headers
-        headers = {}
-        api_key = os.getenv("API_KEY")
-        bearer_token = os.getenv("BEARER_TOKEN")
-        
-        if api_key:
-            headers["X-API-Key"] = api_key
-        if bearer_token:
-            headers["Authorization"] = f"Bearer {bearer_token}"
+        # Prepare headers
+        headers = CUSTOM_HEADERS.copy()
+        if METHOD in ["POST", "PUT", "PATCH"] and REQUEST_BODY:
+            headers["Content-Type"] = "application/json"
 
         try:
-            with self.client.get("/", headers=headers, catch_response=True, timeout=10) as response:
-                latency = int((time.time() - start) * 1000)
+            # Execute request based on method
+            request_kwargs = {
+                "headers": headers,
+                "catch_response": True,
+                "timeout": 30
+            }
+            
+            if METHOD == "GET":
+                response = self.client.get(ENDPOINT_PATH, **request_kwargs)
+            elif METHOD == "POST":
+                request_kwargs["json"] = REQUEST_BODY
+                response = self.client.post(ENDPOINT_PATH, **request_kwargs)
+            elif METHOD == "PUT":
+                request_kwargs["json"] = REQUEST_BODY
+                response = self.client.put(ENDPOINT_PATH, **request_kwargs)
+            elif METHOD == "DELETE":
+                response = self.client.delete(ENDPOINT_PATH, **request_kwargs)
+            elif METHOD == "PATCH":
+                request_kwargs["json"] = REQUEST_BODY
+                response = self.client.patch(ENDPOINT_PATH, **request_kwargs)
+            else:
+                return
+            
+            with response:
+                latency_ms = int((time.time() - start) * 1000)
                 
-                # Track request
-                failure_tracker["total_requests"] += 1
-                failure_tracker["requests_last_second"] += 1
+                # Track metrics
+                metrics_tracker["total_requests"] += 1
+                metrics_tracker["requests_last_second"] += 1
+                metrics_tracker["latencies"].append(latency_ms)
+                metrics_tracker["status_codes"][response.status_code] += 1
                 
-                # Calculate RPS every second
-                now = time.time()
-                if now - failure_tracker["last_rps_check"] >= 1.0:
-                    failure_tracker["current_rps"] = failure_tracker["requests_last_second"]
-                    if failure_tracker["current_rps"] > failure_tracker["peak_rps"]:
-                        failure_tracker["peak_rps"] = failure_tracker["current_rps"]
-                    failure_tracker["requests_last_second"] = 0
-                    failure_tracker["last_rps_check"] = now
-                
-                # Check if slow
-                if latency > MAX_LATENCY_MS:
-                    failure_tracker["slow_requests"] += 1
-                
-                # Check if error
+                # Track failures and timeouts
                 is_error = response.status_code >= 400
-                if is_error:
-                    failure_tracker["failed_requests"] += 1
-                    failure_tracker["recent_errors"].append({
-                        "timestamp": time.time(),
-                        "status": response.status_code,
-                        "latency": latency
-                    })
-
-                # Calculate elapsed time and RPS
-                elapsed_time = time.time() - failure_tracker["start_time"]
-                avg_rps = failure_tracker["total_requests"] / max(elapsed_time, 1)
-
-                metric = {
-                    "latency_ms": latency,
-                    "status_code": response.status_code,
-                    "timestamp": time.time(),
-                    "total_requests": failure_tracker["total_requests"],
-                    "failed_requests": failure_tracker["failed_requests"],
-                    "error_rate": failure_tracker["failed_requests"] / max(failure_tracker["total_requests"], 1),
-                    "test_stopped": failure_tracker["test_stopped"],
-                    "current_users": failure_tracker["current_users"],
-                    "current_rps": failure_tracker["current_rps"],
-                    "peak_rps": failure_tracker["peak_rps"],
-                    "avg_rps": avg_rps
-                }
-
-                try:
-                    publish_metric(metric)
-                except Exception as e:
-                    print(f"Failed to publish metric to Redis: {e}")
+                is_timeout = latency_ms >= 30000  # 30 second timeout
                 
-                # Check failure conditions in progressive/auto-ramp mode
-                if (PROGRESSIVE_MODE or AUTO_RAMP_MODE) and not failure_tracker["test_stopped"]:
-                    check_failure_conditions()
-
                 if is_error:
+                    metrics_tracker["failed_requests"] += 1
                     response.failure(f"Error: {response.status_code}")
                 else:
                     response.success()
                     
+                if is_timeout:
+                    metrics_tracker["timeout_requests"] += 1
+            
+            # Publish metrics and check breaking point AFTER response context closes
+            publish_metrics_if_needed()
+            check_breaking_point_conditions()
+                    
         except Exception as e:
-            failure_tracker["failed_requests"] += 1
-            failure_tracker["total_requests"] += 1
-            print(f"Request exception: {e}")
+            metrics_tracker["failed_requests"] += 1
+            metrics_tracker["total_requests"] += 1
+            metrics_tracker["timeout_requests"] += 1
             
-            elapsed_time = time.time() - failure_tracker["start_time"]
-            avg_rps = failure_tracker["total_requests"] / max(elapsed_time, 1)
-            
-            metric = {
-                "latency_ms": -1,
-                "status_code": 0,
-                "timestamp": time.time(),
-                "total_requests": failure_tracker["total_requests"],
-                "failed_requests": failure_tracker["failed_requests"],
-                "error_rate": failure_tracker["failed_requests"] / max(failure_tracker["total_requests"], 1),
-                "test_stopped": failure_tracker["test_stopped"],
-                "current_users": failure_tracker["current_users"],
-                "current_rps": failure_tracker["current_rps"],
-                "peak_rps": failure_tracker["peak_rps"],
-                "avg_rps": avg_rps,
-                "error": str(e)
-            }
-            
-            try:
-                publish_metric(metric)
-            except:
-                pass
-                
-            if (PROGRESSIVE_MODE or AUTO_RAMP_MODE) and not failure_tracker["test_stopped"]:
-                check_failure_conditions()
+            publish_metrics_if_needed()
+            check_breaking_point_conditions()
 
 
-def check_failure_conditions():
-    """Check if API has reached breaking point"""
-    if failure_tracker["total_requests"] < 10:  # Need minimum data
+def publish_metrics_if_needed():
+    """Publish aggregated metrics every second"""
+    now = time.time()
+    
+    # Publish every 1 second
+    if now - metrics_tracker["last_metrics_publish"] >= 1.0:
+        # Calculate RPS
+        metrics_tracker["current_rps"] = metrics_tracker["requests_last_second"]
+        if metrics_tracker["current_rps"] > metrics_tracker["peak_rps"]:
+            metrics_tracker["peak_rps"] = metrics_tracker["current_rps"]
+        
+        # Calculate latency percentiles
+        latencies = sorted(metrics_tracker["latencies"][-1000:])  # Last 1000 requests
+        n = len(latencies)
+        
+        if n > 0:
+            p50_latency = latencies[int(n * 0.50)] if n > 0 else 0
+            p95_latency = latencies[int(n * 0.95)] if n > 1 else latencies[0]
+            p99_latency = latencies[int(n * 0.99)] if n > 2 else latencies[-1]
+            avg_latency = sum(latencies) / n
+        else:
+            p50_latency = p95_latency = p99_latency = avg_latency = 0
+        
+        # Calculate rates
+        error_rate = metrics_tracker["failed_requests"] / max(metrics_tracker["total_requests"], 1)
+        timeout_rate = metrics_tracker["timeout_requests"] / max(metrics_tracker["total_requests"], 1)
+        
+        elapsed_time = time.time() - metrics_tracker["start_time"]
+        avg_rps = metrics_tracker["total_requests"] / max(elapsed_time, 1)
+        
+        # Build metric payload
+        metric = {
+            "timestamp": now,
+            "users": metrics_tracker["current_users"],
+            "ramp_stage": metrics_tracker["current_stage"],
+            "rps": metrics_tracker["current_rps"],
+            "avg_latency": int(avg_latency),
+            "p50_latency": p50_latency,
+            "p95_latency": p95_latency,
+            "p99_latency": p99_latency,
+            "error_rate": error_rate,
+            "timeout_rate": timeout_rate,
+            "status_codes": dict(metrics_tracker["status_codes"]),
+            "total_requests": metrics_tracker["total_requests"],
+            "failed_requests": metrics_tracker["failed_requests"],
+        }
+        
+        print(f"📊 Publishing: Users={metric['users']}, RPS={metric['rps']}, P95={metric['p95_latency']}ms")
+        
+        try:
+            publish_metric(metric)
+        except Exception as e:
+            print(f"Failed to publish metric to Redis: {e}")
+        
+        # Reset per-second counters
+        metrics_tracker["requests_last_second"] = 0
+        metrics_tracker["last_metrics_publish"] = now
+
+
+def check_breaking_point_conditions():
+    """Check if API has reached breaking point based on stop conditions"""
+    # Need minimum data before checking (at least 50 requests)
+    if metrics_tracker["total_requests"] < 50:
         return
     
-    error_rate = failure_tracker["failed_requests"] / failure_tracker["total_requests"]
+    # Calculate current metrics
+    error_rate = metrics_tracker["failed_requests"] / metrics_tracker["total_requests"]
+    timeout_rate = metrics_tracker["timeout_requests"] / metrics_tracker["total_requests"]
     
-    # Check error rate threshold
+    # Get recent latencies for P95 calculation
+    latencies = sorted(metrics_tracker["latencies"][-1000:])
+    n = len(latencies)
+    p95_latency = latencies[int(n * 0.95)] if n > 1 else 0
+    
+    # Check stop conditions
     if error_rate > MAX_ERROR_RATE:
         stop_test(f"Error rate exceeded: {error_rate:.2%} > {MAX_ERROR_RATE:.2%}")
         return
     
-    # Check recent error spike
-    now = time.time()
-    recent_errors = [e for e in failure_tracker["recent_errors"] 
-                     if now - e["timestamp"] < FAILURE_WINDOW]
+    if timeout_rate > MAX_TIMEOUT_RATE:
+        stop_test(f"Timeout rate exceeded: {timeout_rate:.2%} > {MAX_TIMEOUT_RATE:.2%}")
+        return
     
-    if len(recent_errors) >= 10:  # 10+ errors in window
-        stop_test(f"Error spike detected: {len(recent_errors)} errors in {FAILURE_WINDOW}s")
+    if p95_latency > MAX_P95_LATENCY_MS:
+        stop_test(f"P95 latency exceeded: {p95_latency}ms > {MAX_P95_LATENCY_MS}ms")
         return
 
 
 def stop_test(reason):
     """Stop test and record breaking point"""
-    failure_tracker["test_stopped"] = True
-    elapsed_time = time.time() - failure_tracker["start_time"]
-    avg_rps = failure_tracker["total_requests"] / max(elapsed_time, 1)
+    if metrics_tracker["test_stopped"]:
+        return
+        
+    metrics_tracker["test_stopped"] = True
+    elapsed_time = time.time() - metrics_tracker["start_time"]
+    avg_rps = metrics_tracker["total_requests"] / max(elapsed_time, 1)
     
-    failure_tracker["breaking_point"] = {
+    # Calculate final latency percentiles
+    latencies = sorted(metrics_tracker["latencies"])
+    n = len(latencies)
+    
+    if n > 0:
+        p50_latency = latencies[int(n * 0.50)] if n > 0 else 0
+        p95_latency = latencies[int(n * 0.95)] if n > 1 else latencies[0]
+        p99_latency = latencies[int(n * 0.99)] if n > 2 else latencies[-1]
+    else:
+        p50_latency = p95_latency = p99_latency = 0
+    
+    error_rate = metrics_tracker["failed_requests"] / max(metrics_tracker["total_requests"], 1)
+    timeout_rate = metrics_tracker["timeout_requests"] / max(metrics_tracker["total_requests"], 1)
+    
+    metrics_tracker["breaking_point"] = {
         "reason": reason,
-        "total_requests": failure_tracker["total_requests"],
-        "failed_requests": failure_tracker["failed_requests"],
-        "error_rate": failure_tracker["failed_requests"] / failure_tracker["total_requests"],
+        "total_requests": metrics_tracker["total_requests"],
+        "failed_requests": metrics_tracker["failed_requests"],
+        "error_rate": error_rate,
+        "timeout_rate": timeout_rate,
         "timestamp": time.time(),
-        "users_at_failure": failure_tracker["current_users"],
-        "current_rps": failure_tracker["current_rps"],
-        "peak_rps": failure_tracker["peak_rps"],
+        "users_at_failure": metrics_tracker["current_users"],
+        "current_rps": metrics_tracker["current_rps"],
+        "peak_rps": metrics_tracker["peak_rps"],
         "avg_rps": avg_rps,
-        "elapsed_time": elapsed_time
+        "elapsed_time": elapsed_time,
+        "p50_latency": p50_latency,
+        "p95_latency": p95_latency,
+        "p99_latency": p99_latency,
     }
     
     # Publish breaking point
     try:
         publish_metric({
             "type": "BREAKING_POINT",
-            "breaking_point": failure_tracker["breaking_point"],
+            "breaking_point": metrics_tracker["breaking_point"],
             "timestamp": time.time()
         })
     except Exception as e:
         print(f"Failed to publish breaking point: {e}")
     
     print(f"\n{'='*70}")
-    print(f"🚨 BREAKING POINT REACHED - API CAPACITY DISCOVERED")
+    print(f"🚨 BREAKING POINT REACHED")
     print(f"{'='*70}")
+    print(f"Endpoint: {METHOD} {ENDPOINT_PATH}")
     print(f"Reason: {reason}")
-    print(f"Maximum Concurrent Users: {failure_tracker['current_users']}")
-    print(f"Maximum Requests/Second: {failure_tracker['peak_rps']} RPS (peak)")
-    print(f"Average Requests/Second: {avg_rps:.2f} RPS")
-    print(f"Total Requests Processed: {failure_tracker['total_requests']}")
-    print(f"Failed Requests: {failure_tracker['failed_requests']}")
-    print(f"Error Rate at Failure: {failure_tracker['breaking_point']['error_rate']:.2%}")
+    print(f"Breaking Point Users: {metrics_tracker['current_users']}")
+    print(f"Peak RPS: {metrics_tracker['peak_rps']} req/s")
+    print(f"Average RPS: {avg_rps:.2f} req/s")
+    print(f"Total Requests: {metrics_tracker['total_requests']}")
+    print(f"Failed Requests: {metrics_tracker['failed_requests']}")
+    print(f"Error Rate: {error_rate:.2%}")
+    print(f"Timeout Rate: {timeout_rate:.2%}")
+    print(f"P50 Latency: {p50_latency}ms")
+    print(f"P95 Latency: {p95_latency}ms")
+    print(f"P99 Latency: {p99_latency}ms")
     print(f"Test Duration: {elapsed_time:.1f} seconds")
     print(f"{'='*70}\n")
     

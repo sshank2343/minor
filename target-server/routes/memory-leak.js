@@ -7,9 +7,9 @@ const leakedMemory = [];
 
 router.get("/", (req, res) => {
   try {
-    // Allocate memory and never release it
-    for (let i = 0; i < 100000; i++) {
-      leakedMemory.push(new Array(1000).fill("leak"));
+    // Allocate MASSIVE memory and never release it (500MB per request!)
+    for (let i = 0; i < 500000; i++) {
+      leakedMemory.push(new Array(1000).fill("x".repeat(1000)));
     }
 
     req.logger.warn({

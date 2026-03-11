@@ -6,10 +6,12 @@ router.get("/", (req, res) => {
   try {
     const start = Date.now();
 
-    // Simulate CPU-intensive blocking task
+    // Simulate CPU-intensive blocking task (20 million operations)
+    // This will take ~200-500ms depending on system, and degrade under load
+    // Breaking point typically around 50-100 users
     let result = 0;
-    for (let i = 0; i < 1e8; i++) {
-      result += Math.sqrt(i);
+    for (let i = 0; i < 2e7; i++) {
+      result += Math.sqrt(i) * Math.random();
     }
 
     const duration = Date.now() - start;

@@ -33,7 +33,7 @@ function SystemHealth() {
       : "bg-red-600";
 
   return (
-    <div className="bg-gray-800 p-4 rounded-lg shadow h-80 flex flex-col justify-center items-center">
+    <div className="bg-gray-800 p-3 md:p-4 rounded-lg shadow h-64 md:h-80 flex flex-col justify-center items-center">
       <h2 className="text-xl font-semibold mb-4">System Health</h2>
 
       <div

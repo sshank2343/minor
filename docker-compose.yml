@@ -7,6 +7,16 @@ services:
     ports:
       - "6379:6379"
 
+  mongodb:
+    image: mongo:7
+    container_name: scalesim-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=scalesim
+    volumes:
+      - mongodb_data:/data/db
+
   control-plane:
     build: ./control-plane
     container_name: scalesim-control-plane
@@ -16,6 +26,7 @@ services:
       - "5000:5000"
     depends_on:
       - redis
+      - mongodb
     volumes:
       - ./shared/logs:/shared/logs
       - ./shared/results:/shared/results
@@ -57,3 +68,6 @@ services:
       - "5173:80"
     depends_on:
       - control-plane
+
+volumes:
+  mongodb_data:
